@@ -1,0 +1,387 @@
+openapi: 3.0.3
+info:
+  title: Product Inventory API
+  version: 1.0.0
+  description: |
+    REST API for product inventory management (Laravel 12 + Sanctum).
+
+    1. Call `POST /api/auth/login` (demo account: `demo@example.com` / `password`).
+    2. Click **Authorize** and paste the returned `token`.
+
+    Rate limits: 60 requests/min per user (or per IP when anonymous). `register`/`login` allow 5 requests/min per email+IP.
+    Timestamps are ISO-8601 in GMT+8 (Asia/Kuala_Lumpur).
+servers:
+  - url: /api
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Products
+  - name: Lookups
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user and receive an API token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, password_confirmation, device_name]
+              properties:
+                name: { type: string, example: Jane Doe }
+                email: { type: string, format: email, example: jane@example.com }
+                password: { type: string, format: password, minLength: 8, example: secret-password }
+                password_confirmation: { type: string, format: password, example: secret-password }
+                device_name: { type: string, example: postman }
+      responses:
+        '201': { $ref: '#/components/responses/Token' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange credentials for an API token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, device_name]
+              properties:
+                email: { type: string, format: email, example: demo@example.com }
+                password: { type: string, format: password, example: password }
+                device_name: { type: string, example: swagger }
+      responses:
+        '200': { $ref: '#/components/responses/Token' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the token used for this request
+      responses:
+        '204': { description: Token revoked }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /products:
+    get:
+      tags: [Products]
+      summary: List products (paginated, filterable)
+      parameters:
+        - { name: category_id, in: query, schema: { type: integer }, description: Filter by category }
+        - { name: min_price, in: query, schema: { type: number, minimum: 0 }, description: Minimum price (inclusive) }
+        - { name: max_price, in: query, schema: { type: number, minimum: 0 }, description: Maximum price (inclusive, must be >= min_price) }
+        - { name: stock_level, in: query, schema: { $ref: '#/components/schemas/StockLevel' }, description: 'out_of_stock = 0, low_stock = 1..threshold, in_stock = above threshold' }
+        - { name: min_stock, in: query, schema: { type: integer, minimum: 0 }, description: Minimum stock quantity }
+        - { name: max_stock, in: query, schema: { type: integer, minimum: 0 }, description: Maximum stock quantity }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Matches name or SKU }
+        - name: sort
+          in: query
+          description: Sort column, prefix with `-` for descending. Default `-created_at`.
+          schema:
+            type: string
+            enum: [name, -name, price, -price, stock_quantity, -stock_quantity, created_at, -created_at]
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 15 } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Paginated products
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Products]
+      summary: Create a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /products/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Products]
+      summary: Show a product
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Products]
+      summary: Update a product (all fields optional; partial update)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductUpdateInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    patch:
+      tags: [Products]
+      summary: Partially update a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductUpdateInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Product' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Products]
+      summary: Soft-delete a product
+      responses:
+        '204': { description: Deleted (soft) }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products/{id}/restore:
+    post:
+      tags: [Products]
+      summary: Restore a soft-deleted product
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Restored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Product' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Product is not deleted }
+
+  /categories:
+    get:
+      tags: [Lookups]
+      summary: List categories (with product counts)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Category' }
+
+  /suppliers:
+    get:
+      tags: [Lookups]
+      summary: List suppliers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Supplier' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Sanctum personal access token from /auth/login
+
+  schemas:
+    StockLevel:
+      type: string
+      enum: [in_stock, low_stock, out_of_stock]
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+        created_at: { type: string, format: date-time, example: '2026-11-05T10:15:00+08:00' }
+    Category:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, example: Electronics }
+        slug: { type: string, example: electronics }
+        description: { type: string, nullable: true }
+        products_count: { type: integer, description: Only on /categories }
+    Supplier:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string, nullable: true }
+        cost_price: { type: string, nullable: true, example: '30.00', description: Only when nested in a product }
+    Product:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, example: Wireless Mouse }
+        sku: { type: string, example: WM-001 }
+        description: { type: string, nullable: true }
+        price: { type: string, example: '49.90', description: Decimal string (2dp) to avoid float rounding }
+        stock_quantity: { type: integer, example: 120 }
+        low_stock_threshold: { type: integer, example: 10 }
+        stock_status: { $ref: '#/components/schemas/StockLevel' }
+        category: { $ref: '#/components/schemas/Category' }
+        suppliers:
+          type: array
+          items: { $ref: '#/components/schemas/Supplier' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SupplierLink:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+        cost_price: { type: number, nullable: true, example: 30.0 }
+    ProductInput:
+      type: object
+      required: [category_id, name, sku, price, stock_quantity]
+      properties:
+        category_id: { type: integer, example: 1 }
+        name: { type: string, maxLength: 255, example: Wireless Mouse }
+        sku: { type: string, maxLength: 64, example: wm-001, description: 'Normalised to upper case; A-Z, 0-9, - and _ only' }
+        description: { type: string, nullable: true }
+        price: { type: number, minimum: 0, example: 49.9, description: Max 2 decimal places }
+        stock_quantity: { type: integer, minimum: 0, example: 120 }
+        low_stock_threshold: { type: integer, minimum: 0, default: 10 }
+        suppliers:
+          type: array
+          description: Replaces the product's supplier list (sync). Omit to leave unchanged.
+          items: { $ref: '#/components/schemas/SupplierLink' }
+    ProductUpdateInput:
+      allOf:
+        - $ref: '#/components/schemas/ProductInput'
+      required: []
+    ProductPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        links:
+          type: object
+          properties:
+            first: { type: string }
+            last: { type: string }
+            prev: { type: string, nullable: true }
+            next: { type: string, nullable: true }
+        meta:
+          type: object
+          properties:
+            current_page: { type: integer }
+            from: { type: integer, nullable: true }
+            last_page: { type: integer }
+            per_page: { type: integer }
+            to: { type: integer, nullable: true }
+            total: { type: integer }
+
+  responses:
+    Token:
+      description: Token issued
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              token: { type: string, example: '1|abcdef...' }
+              token_type: { type: string, example: Bearer }
+              user: { $ref: '#/components/schemas/User' }
+    Unauthenticated:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: Unauthenticated. }
+    NotFound:
+      description: Resource not found (or soft-deleted)
+    TooManyRequests:
+      description: Rate limit exceeded (see Retry-After header)
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              errors:
+                type: object
+                additionalProperties:
+                  type: array
+                  items: { type: string }
